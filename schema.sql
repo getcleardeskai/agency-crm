@@ -1,0 +1,91 @@
+-- Run this once in Supabase: Dashboard > SQL Editor > New query > paste > Run.
+-- Then follow README.md to add the three users.
+
+create table if not exists team (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  name text not null,
+  role text not null default 'member' check (role in ('owner','member'))
+);
+
+create table if not exists customers (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid references auth.users(id),
+  updated_by uuid references auth.users(id),
+  business_name text not null,
+  contact_name text,
+  phone text,
+  email text,
+  address text,
+  status text not null default 'lead' check (status in ('lead','active','paused','cancelled')),
+  plan text,
+  setup_fee numeric default 0,
+  setup_paid boolean default false,
+  monthly_amount numeric default 0,
+  billing_day int check (billing_day between 1 and 31),
+  start_date date,
+  paid_month text,
+  next_followup date,
+  notes text,
+  legal_name text,
+  entity_type text,
+  ein text,
+  agreement_date date,
+  agreement_path text,
+  domain_notes text
+);
+
+create table if not exists expenses (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid references auth.users(id),
+  updated_by uuid references auth.users(id),
+  spent_on date not null default current_date,
+  amount numeric not null,
+  category text,
+  business text not null default 'shared' check (business in ('clear_sites','all_seasons','shared')),
+  paid_by text,
+  notes text,
+  receipt_path text
+);
+
+create or replace function is_team() returns boolean language sql security definer stable as
+$$ select exists (select 1 from team where user_id = auth.uid()) $$;
+create or replace function is_owner() returns boolean language sql security definer stable as
+$$ select exists (select 1 from team where user_id = auth.uid() and role = 'owner') $$;
+
+alter table team enable row level security;
+alter table customers enable row level security;
+alter table expenses enable row level security;
+
+drop policy if exists team_read on team;
+create policy team_read on team for select using (is_team());
+
+drop policy if exists customers_read on customers;
+drop policy if exists customers_add on customers;
+drop policy if exists customers_edit on customers;
+drop policy if exists customers_delete on customers;
+create policy customers_read on customers for select using (is_team());
+create policy customers_add on customers for insert with check (is_team());
+create policy customers_edit on customers for update using (is_team()) with check (is_team());
+create policy customers_delete on customers for delete using (is_owner());
+
+drop policy if exists expenses_read on expenses;
+drop policy if exists expenses_add on expenses;
+drop policy if exists expenses_edit on expenses;
+drop policy if exists expenses_delete on expenses;
+create policy expenses_read on expenses for select using (is_team());
+create policy expenses_add on expenses for insert with check (is_team());
+create policy expenses_edit on expenses for update using (is_team()) with check (is_team());
+create policy expenses_delete on expenses for delete using (is_owner());
+
+-- private file storage for receipts and agreements
+insert into storage.buckets (id, name, public) values ('files', 'files', false) on conflict (id) do nothing;
+drop policy if exists files_read on storage.objects;
+drop policy if exists files_add on storage.objects;
+drop policy if exists files_delete on storage.objects;
+create policy files_read on storage.objects for select using (bucket_id = 'files' and is_team());
+create policy files_add on storage.objects for insert with check (bucket_id = 'files' and is_team());
+create policy files_delete on storage.objects for delete using (bucket_id = 'files' and is_owner());
