@@ -1,4 +1,5 @@
 import { getBackend } from "./config-bridge.js";
+import Sortable from "sortablejs";
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -12,7 +13,12 @@ const CATS = ["Software", "Ads", "Hosting and domains", "Supplies", "Equipment",
 const BIZ = { clear_sites: "Clear Sites", all_seasons: "All Seasons", shared: "Shared" };
 const PAYERS = ["Donovan", "Ryan", "Alex", "Business card"];
 
-const S = { be: null, me: null, team: {}, tab: "customers", customers: [], expenses: [], filter: "all", q: "", month: monthKey(), msg: "" };
+// Deal pipeline: the stages a customer moves through, left to right.
+const STAGES = [["ready_to_quote", "Ready to quote"], ["quoted", "Quoted"], ["accepted", "Accepted"], ["in_progress", "In progress"], ["completed", "Completed"], ["paid", "Paid"], ["lost", "Lost"]];
+const stageOf = (c) => c.stage || (c.status === "active" ? "in_progress" : "ready_to_quote");
+const stageLabel = (k) => (STAGES.find((s) => s[0] === k) || [k, k])[1];
+
+const S = { be: null, me: null, team: {}, tab: "pipeline", customers: [], expenses: [], filter: "all", q: "", month: monthKey(), msg: "" };
 const app = $("#app");
 
 function paidThisMonth(c) { return c.paid_month === monthKey(); }
@@ -21,10 +27,38 @@ function nameOf(id) { return S.team[id] || "someone"; }
 // ---------- shell ----------
 function shell(inner) {
   return `<header class="top"><div class="wrap bar"><div class="brand">Clear Sites <span>CRM</span></div>
-  <nav aria-label="Main"><button class="tab${S.tab === "customers" ? " on" : ""}" data-tab="customers">Customers</button><button class="tab${S.tab === "expenses" ? " on" : ""}" data-tab="expenses">Expenses</button></nav>
+  <nav aria-label="Main"><button class="tab${S.tab === "pipeline" ? " on" : ""}" data-tab="pipeline">Pipeline</button><button class="tab${S.tab === "customers" ? " on" : ""}" data-tab="customers">Customers</button><button class="tab${S.tab === "expenses" ? " on" : ""}" data-tab="expenses">Expenses</button></nav>
   <div class="who"><span>${esc(S.me.name)}</span><button class="link" id="out">Sign out</button></div></div></header>
   ${S.be.demo ? `<div class="demo">${S.be.fake ? "Demo mode: fake sample data. Remove ?demo=1 from the address for your real entries." : "Saved only in this browser on this device. Use Export CSV often to keep a backup. Not shared with Ryan or Alex yet."}</div>` : ""}
-  <main class="wrap">${S.msg ? `<p class="flash" role="status">${esc(S.msg)}</p>` : ""}${inner}</main>`;
+  <main class="wrap${S.tab === "pipeline" ? " wide" : ""}">${S.msg ? `<p class="flash" role="status">${esc(S.msg)}</p>` : ""}${inner}</main>`;
+}
+
+// ---------- pipeline ----------
+function pipelineView() {
+  const by = (k) => S.customers.filter((c) => stageOf(c) === k);
+  const val = (arr) => arr.reduce((a, c) => a + (Number(c.quote_amount) || 0), 0);
+  const open = ["ready_to_quote", "quoted", "accepted", "in_progress", "completed"].flatMap(by);
+  const paidMonth = by("paid").filter((c) => (c.paid_on || "").slice(0, 7) === monthKey());
+  return `<div class="sum"><div><b>${open.length}</b><span>Open deals</span></div><div><b>${money(val(open))}</b><span>Open value</span></div><div><b>${money(val(by("quoted")))}</b><span>Waiting on a yes</span></div><div><b>${money(val(paidMonth))}</b><span>Paid this month</span></div></div>
+  <div class="tools"><span class="mut">Drag a card to a new stage, or tap it to edit.</span><button class="btn" id="new">Add lead</button></div>
+  <div class="lanes">${STAGES.map(([k, label]) => { const items = by(k); return `<section class="lane-col"><h3>${label} <span class="cnt">${items.length}</span></h3><div class="lane-val">${val(items) ? money(val(items)) : "&nbsp;"}</div>
+    <ul class="lane" data-stage="${k}">${items.map((c) => `<li data-id="${c.id}"><button class="card" data-open="${c.id}"><b>${esc(c.business_name)}</b><span class="mut">${esc(c.contact_name || c.phone || "")}</span>${c.quote_amount ? `<span class="amt">${money(c.quote_amount)}</span>` : ""}${c.source ? `<span class="tag">${esc(c.source)}</span>` : ""}</button></li>`).join("")}</ul></section>`; }).join("")}</div>`;
+}
+function initPipeline() {
+  document.querySelectorAll(".lane").forEach((el) => {
+    Sortable.create(el, {
+      group: "pipeline", forceFallback: true, fallbackTolerance: 3, animation: 160, ghostClass: "ghost", chosenClass: "chosen", delay: 140, delayOnTouchOnly: true, touchStartThreshold: 6,
+      onEnd: async (evt) => {
+        const id = evt.item.dataset.id, to = evt.to.dataset.stage;
+        const c = S.customers.find((x) => x.id === id);
+        if (!c || stageOf(c) === to) return;
+        const patch = { id, stage: to };
+        if (to === "quoted" && !c.quoted_on) patch.quoted_on = todayStr();
+        if (to === "paid" && !c.paid_on) patch.paid_on = todayStr();
+        try { await S.be.save("customers", patch); await refresh(); S.msg = `Moved to ${stageLabel(to)}.`; render(); } catch (x) { alert(x.message || "Could not move that card."); await refresh(); render(); }
+      },
+    });
+  });
 }
 
 // ---------- customers ----------
@@ -52,7 +86,7 @@ function customersView() {
   <div class="tools"><input id="q" type="search" placeholder="Search name, phone, email, address" value="${esc(S.q)}" aria-label="Search customers"><button class="btn" id="new">Add customer</button></div>
   <div class="chips">${f("all", "All")}${f("lead", "Leads")}${f("active", "Active")}${f("unpaid", "Unpaid")}${f("due", "Follow-up due")}${f("paused", "Paused")}${f("cancelled", "Cancelled")}</div>
   <ul class="rows">${rows.map((c) => `<li><button class="row" data-open="${c.id}"><span class="r1"><b>${esc(c.business_name)}</b><span class="mut">${esc(c.contact_name || "")}${c.phone ? " · " + esc(c.phone) : ""}</span></span>
-  <span class="r2"><span>${esc(c.plan || "")} ${Number(c.monthly_amount) ? money(c.monthly_amount) + "/mo" : ""}</span><span class="mut">${esc(c.status)}${c.status === "active" && Number(c.monthly_amount) ? (paidThisMonth(c) ? " · paid" : " · unpaid") : ""}${c.next_followup ? " · follow up " + esc(c.next_followup) : ""}</span></span></button></li>`).join("") || `<li class="empty">No customers match.</li>`}</ul>
+  <span class="r2"><span>${esc(c.plan || "")} ${Number(c.monthly_amount) ? money(c.monthly_amount) + "/mo" : ""}</span><span class="mut">${esc(stageLabel(stageOf(c)))} · ${esc(c.status)}${c.status === "active" && Number(c.monthly_amount) ? (paidThisMonth(c) ? " · paid" : " · unpaid") : ""}${c.next_followup ? " · follow up " + esc(c.next_followup) : ""}</span></span></button></li>`).join("") || `<li class="empty">No customers match.</li>`}</ul>
   <p class="foot"><button class="link" id="csv">Export CSV</button></p>`;
 }
 
@@ -67,7 +101,11 @@ const field = (name, label, v = "", opts = {}) => {
 
 function customerForm(c = {}) {
   const isNew = !c.id;
-  return `<form id="f" data-t="customers" data-id="${esc(c.id || "")}"><h2>${isNew ? "New customer" : esc(c.business_name)}</h2>
+  return `<form id="f" data-t="customers" data-id="${esc(c.id || "")}"><h2>${isNew ? "New lead" : esc(c.business_name)}</h2>
+  <fieldset><legend>Deal</legend>
+  ${field("stage", "Stage", isNew ? "ready_to_quote" : stageOf(c), { list: STAGES })}${field("quote_amount", "Quote amount ($)", c.quote_amount ?? "", { type: "number" })}
+  ${field("source", "Where it came from", c.source || "", { ph: "Website form, call, referral" })}${field("paid_on", "Paid on", c.paid_on || "", { type: "date" })}
+  ${field("lead_details", "What they asked for", c.lead_details, { type: "textarea", full: true, rows: 3 })}</fieldset>
   <fieldset><legend>Contact</legend>
   ${field("business_name", "Business name*", c.business_name, { full: true })}${field("contact_name", "Contact name", c.contact_name)}${field("phone", "Phone", c.phone, { type: "tel" })}
   ${field("email", "Email", c.email, { type: "email" })}${field("status", "Status", c.status || "lead", { list: STATUSES.map((s) => [s, s[0].toUpperCase() + s.slice(1)]) })}${field("address", "Address", c.address, { full: true })}</fieldset>
@@ -177,8 +215,10 @@ function download(name, text) { const a = document.createElement("a"); a.href = 
 
 // ---------- render ----------
 function render() {
-  app.innerHTML = shell(S.tab === "customers" ? customersView() : expensesView()) + `<dialog id="dlg"></dialog>`;
+  const view = S.tab === "pipeline" ? pipelineView() : S.tab === "customers" ? customersView() : expensesView();
+  app.innerHTML = shell(view) + `<dialog id="dlg"></dialog>`;
   S.msg = "";
+  if (S.tab === "pipeline") initPipeline();
 }
 function openForm(html) { const d = $("#dlg"); d.innerHTML = html; d.showModal(); }
 
@@ -222,7 +262,10 @@ app.addEventListener("submit", async (e) => {
     if (t === "customers") {
       const existing = id ? S.customers.find((c) => c.id === id) : {};
       if (!String(d.get("business_name")).trim()) throw new Error("Business name is required.");
-      row = { business_name: d.get("business_name").trim(), contact_name: str("contact_name"), phone: str("phone"), email: str("email"), address: str("address"), status: d.get("status"), plan: d.get("plan"),
+      const stage = d.get("stage") || "ready_to_quote";
+      row = { stage, quote_amount: num("quote_amount"), source: str("source"), lead_details: str("lead_details"),
+        quoted_on: existing.quoted_on || (stage === "quoted" ? todayStr() : null), paid_on: str("paid_on") || (stage === "paid" ? todayStr() : null),
+        business_name: d.get("business_name").trim(), contact_name: str("contact_name"), phone: str("phone"), email: str("email"), address: str("address"), status: d.get("status"), plan: d.get("plan"),
         setup_fee: num("setup_fee") ?? 0, setup_paid: d.get("setup_paid") === "on", monthly_amount: num("monthly_amount") ?? 0, billing_day: num("billing_day"), start_date: str("start_date"), next_followup: str("next_followup"),
         notes: str("notes"), legal_name: str("legal_name"), entity_type: str("entity_type"), ein: str("ein"), agreement_date: str("agreement_date"), domain_notes: str("domain_notes"),
         paid_month: d.get("paid_now") === "on" ? monthKey() : (existing.paid_month === monthKey() ? null : existing.paid_month || null), agreement_path: existing.agreement_path || null };

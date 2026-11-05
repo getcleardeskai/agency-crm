@@ -51,3 +51,19 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--ink);outline-off
  .sum{grid-template-columns:1fr 1fr}.sum b{font-size:22px}
  fieldset{grid-template-columns:1fr}.who span{display:none}.tools{flex-wrap:wrap}.row{flex-direction:column;gap:4px}.r2{text-align:left;align-items:flex-start}
 }
+
+/* pipeline lanes */
+.lanes{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(220px,1fr);gap:12px;overflow-x:auto;padding-bottom:16px;scroll-snap-type:x proximity;margin:0 -18px;padding-inline:18px}
+.lane-col{background:#f0f0f0;border-radius:12px;padding:12px 10px 10px;min-height:260px;scroll-snap-align:start}
+.lane-col h3{margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center}
+.lane-col .cnt{background:#111;color:#fff;border-radius:99px;font-size:12px;min-width:22px;text-align:center;padding:1px 7px}
+.lane-val{font-size:14px;color:var(--mut);margin:2px 0 10px;font-weight:600}
+.lane{list-style:none;margin:0;padding:0;display:grid;gap:8px;min-height:180px;align-content:start}
+.lane li{margin:0}
+.card{width:100%;text-align:left;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:2px;cursor:grab}
+.card:hover{border-color:#111}
+.card b{font-size:15px}.card .amt{font-weight:800;font-size:14px}
+.card .tag{justify-self:start;font-size:11px;letter-spacing:.04em;text-transform:uppercase;background:#111;color:#fff;border-radius:99px;padding:1px 8px;margin-top:4px}
+.ghost{opacity:.35}.chosen .card{border-color:#111;box-shadow:0 8px 20px -10px rgba(0,0,0,.5)}
+@media(max-width:640px){.lanes{grid-auto-columns:78%}}
+.wrap.wide{max-width:1640px}.wrap.wide .lanes{grid-auto-columns:minmax(200px,1fr)}

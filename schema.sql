@@ -33,7 +33,13 @@ create table if not exists customers (
   ein text,
   agreement_date date,
   agreement_path text,
-  domain_notes text
+  domain_notes text,
+  stage text not null default 'ready_to_quote' check (stage in ('ready_to_quote','quoted','accepted','in_progress','completed','paid','lost')),
+  quote_amount numeric,
+  quoted_on date,
+  paid_on date,
+  source text,
+  lead_details text
 );
 
 create table if not exists expenses (
@@ -95,3 +101,11 @@ create policy files_delete on storage.objects for delete using (bucket_id = 'fil
 -- If you created the expenses table before monthly expenses existed, run these two lines once:
 alter table expenses add column if not exists frequency text not null default 'once' check (frequency in ('once','monthly'));
 alter table expenses add column if not exists ends_on date;
+
+-- If the customers table already exists (created before the pipeline), run these once:
+alter table customers add column if not exists stage text not null default 'ready_to_quote' check (stage in ('ready_to_quote','quoted','accepted','in_progress','completed','paid','lost'));
+alter table customers add column if not exists quote_amount numeric;
+alter table customers add column if not exists quoted_on date;
+alter table customers add column if not exists paid_on date;
+alter table customers add column if not exists source text;
+alter table customers add column if not exists lead_details text;
