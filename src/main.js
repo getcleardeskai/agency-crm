@@ -88,17 +88,25 @@ function customerForm(c = {}) {
 }
 
 // ---------- expenses ----------
+// A monthly expense counts in every month from its start month until its "stops after" month (if set).
+const isMonthly = (e) => e.frequency === "monthly";
+function appliesIn(e, month) {
+  const start = (e.spent_on || "").slice(0, 7);
+  if (!isMonthly(e)) return start === month;
+  return start <= month && (!e.ends_on || e.ends_on.slice(0, 7) >= month);
+}
 function expensesView() {
-  const inMonth = S.expenses.filter((e) => (e.spent_on || "").slice(0, 7) === S.month);
-  const total = inMonth.reduce((a, e) => a + Number(e.amount || 0), 0);
-  const by = (k, f) => inMonth.filter((e) => e[k] === f).reduce((a, e) => a + Number(e.amount || 0), 0);
+  const inMonth = S.expenses.filter((e) => appliesIn(e, S.month));
+  const sum = (arr) => arr.reduce((a, e) => a + Number(e.amount || 0), 0);
+  const total = sum(inMonth), monthly = sum(inMonth.filter(isMonthly)), once = total - monthly;
+  const by = (k, f) => sum(inMonth.filter((e) => e[k] === f));
   const cats = {}; inMonth.forEach((e) => (cats[e.category || "Other"] = (cats[e.category || "Other"] || 0) + Number(e.amount || 0)));
-  return `<div class="sum"><div><b>${money(total)}</b><span>Total this month</span></div><div><b>${money(by("business", "clear_sites"))}</b><span>Clear Sites</span></div><div><b>${money(by("business", "all_seasons"))}</b><span>All Seasons</span></div><div><b>${money(by("business", "shared"))}</b><span>Shared</span></div></div>
+  return `<div class="sum"><div><b>${money(total)}</b><span>Total this month</span></div><div><b>${money(monthly)}</b><span>Monthly (recurring)</span></div><div><b>${money(once)}</b><span>One-time</span></div><div><b>${money(by("business", "clear_sites"))} / ${money(by("business", "all_seasons"))}</b><span>Clear Sites / All Seasons</span></div></div>
   <div class="tools"><label class="mon">Month <input id="mon" type="month" value="${esc(S.month)}"></label><button class="btn" id="newx">Add expense</button></div>
   ${Object.keys(cats).length ? `<p class="cats">${Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} <b>${money(v)}</b>`).join(" &nbsp;·&nbsp; ")}</p>` : ""}
-  <ul class="rows">${inMonth.map((e) => `<li><button class="row" data-openx="${e.id}"><span class="r1"><b>${money(e.amount)}</b><span class="mut">${esc(e.notes || e.category || "")}</span></span><span class="r2"><span>${esc(e.category || "")}</span><span class="mut">${esc(e.spent_on)} · ${esc(BIZ[e.business] || e.business)}${e.paid_by ? " · " + esc(e.paid_by) : ""}${e.receipt_path ? " · receipt" : ""}</span></span></button></li>`).join("") || `<li class="empty">No expenses this month.</li>`}</ul>
+  <ul class="rows">${inMonth.map((e) => `<li><button class="row" data-openx="${e.id}"><span class="r1"><b>${money(e.amount)}</b><span class="mut">${esc(e.notes || e.category || "")}</span></span><span class="r2"><span>${esc(e.category || "")}</span><span class="mut">${isMonthly(e) ? "monthly since " : ""}${esc(e.spent_on)}${isMonthly(e) && e.ends_on ? " until " + esc(e.ends_on) : ""} · ${esc(BIZ[e.business] || e.business)}${e.paid_by ? " · " + esc(e.paid_by) : ""}${e.receipt_path ? " · receipt" : ""}</span></span></button></li>`).join("") || `<li class="empty">No expenses this month.</li>`}</ul>
   <p class="foot"><button class="link" id="csv">Export CSV (all months)</button> &nbsp;·&nbsp; <label class="link" style="display:inline;cursor:pointer">Import CSV<input id="imp" type="file" accept=".csv,text/csv" hidden></label>
-  <span class="note" style="display:block;margin-top:6px">Import columns: date, amount, category, business (Clear Sites, All Seasons or Shared), paid_by, notes.</span></p>`;
+  <span class="note" style="display:block;margin-top:6px">Import columns: date, amount, category, business (Clear Sites, All Seasons or Shared), paid_by, notes, type (monthly or leave blank for one-time).</span></p>`;
 }
 
 // minimal CSV reader (handles quoted cells)
@@ -120,7 +128,7 @@ async function importExpenses(file) {
   if (rows.length < 2) throw new Error("That file has no rows.");
   const head = rows[0].map((h) => h.trim().toLowerCase().replace(/\s+/g, "_"));
   const col = (...names) => head.findIndex((h) => names.includes(h));
-  const iD = col("date", "spent_on"), iA = col("amount", "total"), iC = col("category"), iB = col("business"), iP = col("paid_by", "paid"), iN = col("notes", "note", "description");
+  const iD = col("date", "spent_on"), iA = col("amount", "total"), iC = col("category"), iB = col("business"), iP = col("paid_by", "paid"), iN = col("notes", "note", "description"), iF = col("type", "frequency", "recurring");
   if (iA < 0) throw new Error("The file needs an amount column.");
   const bizKey = (v) => { v = String(v || "").toLowerCase(); return v.includes("season") ? "all_seasons" : v.includes("clear") || v.includes("site") ? "clear_sites" : "shared"; };
   let n = 0;
@@ -128,7 +136,7 @@ async function importExpenses(file) {
     const amt = Number(String(r[iA]).replace(/[$,\s]/g, ""));
     if (!amt || Number.isNaN(amt)) continue;
     const d = iD >= 0 ? new Date(r[iD]) : new Date();
-    await S.be.save("expenses", { spent_on: (isNaN(d) ? new Date() : d).toISOString().slice(0, 10), amount: amt, category: iC >= 0 && r[iC] ? r[iC].trim() : "Other", business: bizKey(iB >= 0 ? r[iB] : ""), paid_by: iP >= 0 && r[iP] ? r[iP].trim() : "Business card", notes: iN >= 0 ? r[iN].trim() || null : null, receipt_path: null });
+    await S.be.save("expenses", { frequency: iF >= 0 && /month|recurr|yes|true/i.test(r[iF] || "") ? "monthly" : "once", ends_on: null, spent_on: (isNaN(d) ? new Date() : d).toISOString().slice(0, 10), amount: amt, category: iC >= 0 && r[iC] ? r[iC].trim() : "Other", business: bizKey(iB >= 0 ? r[iB] : ""), paid_by: iP >= 0 && r[iP] ? r[iP].trim() : "Business card", notes: iN >= 0 ? r[iN].trim() || null : null, receipt_path: null });
     n++;
   }
   return n;
@@ -136,7 +144,9 @@ async function importExpenses(file) {
 function expenseForm(e = {}) {
   const isNew = !e.id;
   return `<form id="f" data-t="expenses" data-id="${esc(e.id || "")}"><h2>${isNew ? "New expense" : "Expense"}</h2><fieldset>
-  ${field("spent_on", "Date*", e.spent_on || todayStr(), { type: "date" })}${field("amount", "Amount ($)*", e.amount ?? "", { type: "number" })}
+  ${field("frequency", "Type", e.frequency || "once", { list: [["once", "One-time"], ["monthly", "Monthly (repeats every month)"]], full: true })}
+  ${field("spent_on", "Date* (first charge, for monthly)", e.spent_on || todayStr(), { type: "date" })}${field("amount", "Amount ($)* (each month, for monthly)", e.amount ?? "", { type: "number" })}
+  ${field("ends_on", "Monthly only: stops after (leave blank if ongoing)", e.ends_on || "", { type: "date", full: true })}
   ${field("category", "Category", e.category || "Software", { list: CATS.map((c) => [c, c]) })}${field("business", "Which business", e.business || "shared", { list: Object.entries(BIZ) })}
   ${field("paid_by", "Paid by", e.paid_by || "Donovan", { list: PAYERS.map((c) => [c, c]) })}
   <label class="full">Receipt photo<input type="file" name="receipt_file" accept="image/*,application/pdf" capture="environment">${e.receipt_path ? `<a href="#" class="link" data-file="${esc(e.receipt_path)}">Open current receipt</a>` : ""}</label>
@@ -220,7 +230,7 @@ app.addEventListener("submit", async (e) => {
     } else {
       const existing = id ? S.expenses.find((c) => c.id === id) : {};
       if (num("amount") == null || Number.isNaN(num("amount"))) throw new Error("Enter an amount.");
-      row = { spent_on: d.get("spent_on") || todayStr(), amount: num("amount"), category: d.get("category"), business: d.get("business"), paid_by: d.get("paid_by"), notes: str("notes"), receipt_path: existing.receipt_path || null };
+      row = { frequency: d.get("frequency") === "monthly" ? "monthly" : "once", ends_on: d.get("frequency") === "monthly" ? str("ends_on") : null, spent_on: d.get("spent_on") || todayStr(), amount: num("amount"), category: d.get("category"), business: d.get("business"), paid_by: d.get("paid_by"), notes: str("notes"), receipt_path: existing.receipt_path || null };
       const file = d.get("receipt_file"); if (file && file.size) row.receipt_path = await S.be.upload(file);
     }
     if (id) row.id = id;

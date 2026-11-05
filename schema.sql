@@ -48,7 +48,9 @@ create table if not exists expenses (
   business text not null default 'shared' check (business in ('clear_sites','all_seasons','shared')),
   paid_by text,
   notes text,
-  receipt_path text
+  receipt_path text,
+  frequency text not null default 'once' check (frequency in ('once','monthly')),
+  ends_on date
 );
 
 create or replace function is_team() returns boolean language sql security definer stable as
@@ -89,3 +91,7 @@ drop policy if exists files_delete on storage.objects;
 create policy files_read on storage.objects for select using (bucket_id = 'files' and is_team());
 create policy files_add on storage.objects for insert with check (bucket_id = 'files' and is_team());
 create policy files_delete on storage.objects for delete using (bucket_id = 'files' and is_owner());
+
+-- If you created the expenses table before monthly expenses existed, run these two lines once:
+alter table expenses add column if not exists frequency text not null default 'once' check (frequency in ('once','monthly'));
+alter table expenses add column if not exists ends_on date;
