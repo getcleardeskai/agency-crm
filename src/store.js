@@ -10,7 +10,7 @@ function demoBackend() {
   const fake = new URLSearchParams(location.search).get("demo") === "1";
   const KEY = fake ? "agency-crm-demo-v1" : "agency-crm-local-v1";
   const as = new URLSearchParams(location.search).get("as") === "member" ? "member" : "owner";
-  const me = as === "owner" ? { id: "u-donovan", name: "Owner Demo", role: "owner" } : { id: "u-ryan", name: "Member Demo", role: "member" };
+  const me = as === "owner" ? { id: "u-donovan", name: fake ? "Owner Demo" : "You", role: "owner" } : { id: "u-ryan", name: fake ? "Member Demo" : "Team member", role: "member" };
   const team = [{ user_id: "u-donovan", name: "Owner Demo" }, { user_id: "u-ryan", name: "Member Demo" }, { user_id: "u-alex", name: "Member Demo 2" }];
   const mk = new Date().toISOString().slice(0, 7);
   const seed = {
