@@ -23,7 +23,7 @@ function shell(inner) {
   return `<header class="top"><div class="wrap bar"><div class="brand">Clear Sites <span>CRM</span></div>
   <nav aria-label="Main"><button class="tab${S.tab === "customers" ? " on" : ""}" data-tab="customers">Customers</button><button class="tab${S.tab === "expenses" ? " on" : ""}" data-tab="expenses">Expenses</button></nav>
   <div class="who"><span>${esc(S.me.name)}</span><button class="link" id="out">Sign out</button></div></div></header>
-  ${S.be.demo ? `<div class="demo">Demo mode: fake data saved only in this browser. Add the Supabase keys in src/config.js to go live.</div>` : ""}
+  ${S.be.demo ? `<div class="demo">${S.be.fake ? "Demo mode: fake sample data. Remove ?demo=1 from the address for your real entries." : "Saved only in this browser on this device. Use Export CSV often to keep a backup. Not shared with Ryan or Alex yet."}</div>` : ""}
   <main class="wrap">${S.msg ? `<p class="flash" role="status">${esc(S.msg)}</p>` : ""}${inner}</main>`;
 }
 
@@ -97,7 +97,41 @@ function expensesView() {
   <div class="tools"><label class="mon">Month <input id="mon" type="month" value="${esc(S.month)}"></label><button class="btn" id="newx">Add expense</button></div>
   ${Object.keys(cats).length ? `<p class="cats">${Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} <b>${money(v)}</b>`).join(" &nbsp;·&nbsp; ")}</p>` : ""}
   <ul class="rows">${inMonth.map((e) => `<li><button class="row" data-openx="${e.id}"><span class="r1"><b>${money(e.amount)}</b><span class="mut">${esc(e.notes || e.category || "")}</span></span><span class="r2"><span>${esc(e.category || "")}</span><span class="mut">${esc(e.spent_on)} · ${esc(BIZ[e.business] || e.business)}${e.paid_by ? " · " + esc(e.paid_by) : ""}${e.receipt_path ? " · receipt" : ""}</span></span></button></li>`).join("") || `<li class="empty">No expenses this month.</li>`}</ul>
-  <p class="foot"><button class="link" id="csv">Export CSV (all months)</button></p>`;
+  <p class="foot"><button class="link" id="csv">Export CSV (all months)</button> &nbsp;·&nbsp; <label class="link" style="display:inline;cursor:pointer">Import CSV<input id="imp" type="file" accept=".csv,text/csv" hidden></label>
+  <span class="note" style="display:block;margin-top:6px">Import columns: date, amount, category, business (Clear Sites, All Seasons or Shared), paid_by, notes.</span></p>`;
+}
+
+// minimal CSV reader (handles quoted cells)
+function parseCsv(text) {
+  const rows = []; let row = [], cell = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+    else if (c === '"') q = true;
+    else if (c === ",") { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else if (c !== "\r") cell += c;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((x) => x.trim()));
+}
+async function importExpenses(file) {
+  const rows = parseCsv(await file.text());
+  if (rows.length < 2) throw new Error("That file has no rows.");
+  const head = rows[0].map((h) => h.trim().toLowerCase().replace(/\s+/g, "_"));
+  const col = (...names) => head.findIndex((h) => names.includes(h));
+  const iD = col("date", "spent_on"), iA = col("amount", "total"), iC = col("category"), iB = col("business"), iP = col("paid_by", "paid"), iN = col("notes", "note", "description");
+  if (iA < 0) throw new Error("The file needs an amount column.");
+  const bizKey = (v) => { v = String(v || "").toLowerCase(); return v.includes("season") ? "all_seasons" : v.includes("clear") || v.includes("site") ? "clear_sites" : "shared"; };
+  let n = 0;
+  for (const r of rows.slice(1)) {
+    const amt = Number(String(r[iA]).replace(/[$,\s]/g, ""));
+    if (!amt || Number.isNaN(amt)) continue;
+    const d = iD >= 0 ? new Date(r[iD]) : new Date();
+    await S.be.save("expenses", { spent_on: (isNaN(d) ? new Date() : d).toISOString().slice(0, 10), amount: amt, category: iC >= 0 && r[iC] ? r[iC].trim() : "Other", business: bizKey(iB >= 0 ? r[iB] : ""), paid_by: iP >= 0 && r[iP] ? r[iP].trim() : "Business card", notes: iN >= 0 ? r[iN].trim() || null : null, receipt_path: null });
+    n++;
+  }
+  return n;
 }
 function expenseForm(e = {}) {
   const isNew = !e.id;
@@ -157,6 +191,10 @@ app.addEventListener("click", async (e) => {
     const f = $("#f"); if (!confirm("Delete this record permanently?")) return;
     try { await S.be.remove(f.dataset.t, f.dataset.id); $("#dlg").close(); await refresh(); S.msg = "Deleted."; render(); } catch (x) { alert(x.message); }
   }
+});
+app.addEventListener("change", async (e) => {
+  if (e.target.id !== "imp" || !e.target.files[0]) return;
+  try { const n = await importExpenses(e.target.files[0]); await refresh(); S.msg = `Imported ${n} expense${n === 1 ? "" : "s"}.`; render(); } catch (x) { alert(x.message || "Could not import that file."); }
 });
 app.addEventListener("input", (e) => {
   if (e.target.id === "q") { S.q = e.target.value; const pos = e.target.selectionStart; render(); const q = $("#q"); q.focus(); q.setSelectionRange(pos, pos); }

@@ -5,7 +5,10 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 // ---------------- demo backend (localStorage, fake data) ----------------
 function demoBackend() {
-  const KEY = "agency-crm-demo-v1";
+  // Device mode: real entries, empty to start, saved only in this browser on this device.
+  // Add ?demo=1 to the address to see the fake sample data instead.
+  const fake = new URLSearchParams(location.search).get("demo") === "1";
+  const KEY = fake ? "agency-crm-demo-v1" : "agency-crm-local-v1";
   const as = new URLSearchParams(location.search).get("as") === "member" ? "member" : "owner";
   const me = as === "owner" ? { id: "u-donovan", name: "Owner Demo", role: "owner" } : { id: "u-ryan", name: "Member Demo", role: "member" };
   const team = [{ user_id: "u-donovan", name: "Owner Demo" }, { user_id: "u-ryan", name: "Member Demo" }, { user_id: "u-alex", name: "Member Demo 2" }];
@@ -23,10 +26,12 @@ function demoBackend() {
   };
   const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch { return null; } };
   const save = (d) => { try { localStorage.setItem(KEY, JSON.stringify(d)); } catch {} };
-  let db = load() || seed; save(db);
+  let db = load() || (fake ? seed : { customers: [], expenses: [] }); save(db);
   const files = {};
+  const toDataUrl = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
   return {
     demo: true,
+    fake,
     async session() { return me; },
     async login() { return me; }, async logout() { location.reload(); },
     async team() { return team; },
@@ -38,8 +43,12 @@ function demoBackend() {
       save(db);
     },
     async remove(t, id) { if (me.role !== "owner") throw new Error("Only the owner can delete."); db[t] = db[t].filter((r) => r.id !== id); save(db); },
-    async upload(file) { const p = "demo/" + uid() + "-" + file.name; files[p] = URL.createObjectURL(file); return p; },
-    async fileUrl(p) { return files[p] || null; },
+    async upload(file) {
+      if (fake) { const p = "demo/" + uid() + "-" + file.name; files[p] = URL.createObjectURL(file); return p; }
+      if (file.size > 400 * 1024) throw new Error("That file is too big for device mode (400 KB max). Shrink the photo, or wait for the shared version.");
+      return await toDataUrl(file);
+    },
+    async fileUrl(p) { return p && p.startsWith("data:") ? p : files[p] || null; },
   };
 }
 
