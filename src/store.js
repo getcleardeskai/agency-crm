@@ -1,5 +1,6 @@
 import { DEMO, SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js";
 
+const AUTH_HASH = typeof location !== "undefined" ? location.hash : "";
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -55,7 +56,8 @@ function demoBackend() {
 // ---------------- Supabase backend ----------------
 async function supabaseBackend() {
   const { createClient } = await import("@supabase/supabase-js");
-  const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+  let pwPending = /type=(invite|recovery)/.test(AUTH_HASH);
   let cached = null;
   const throwIf = ({ error }) => { if (error) throw new Error(error.message); };
   return {
@@ -68,6 +70,9 @@ async function supabaseBackend() {
       if (!row) return { id: data.session.user.id, name: data.session.user.email, role: "none" };
       return (cached = { id: data.session.user.id, name: row.name, role: row.role });
     },
+    needsPassword() { return pwPending; },
+    async setPassword(pw) { const r = await sb.auth.updateUser({ password: pw }); throwIf(r); pwPending = false; history.replaceState(null, "", location.pathname); cached = null; },
+    async resetEmail(email) { const r = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname }); throwIf(r); },
     async login(email, password) { const r = await sb.auth.signInWithPassword({ email, password }); throwIf(r); cached = null; return this.session(); },
     async logout() { await sb.auth.signOut(); location.reload(); },
     async team() { const r = await sb.from("team").select("user_id,name"); throwIf(r); return r.data; },

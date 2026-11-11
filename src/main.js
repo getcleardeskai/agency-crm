@@ -197,7 +197,8 @@ function expenseForm(e = {}) {
 function loginView(err = "") {
   app.innerHTML = `<div class="login"><h1>Clear Sites <span>CRM</span></h1><p class="mut">Private. Team only.</p>
   <form id="lf"><label>Email<input name="email" type="email" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label>
-  <button class="btn" type="submit">Sign in</button>${err ? `<p class="err" role="alert">${esc(err)}</p>` : ""}</form></div>`;
+  <button class="btn" type="submit">Sign in</button>${err ? `<p class="err" role="alert">${esc(err)}</p>` : ""}${S.be.resetEmail ? `<p class="note"><a href="#" id="fp">Forgot password?</a></p>` : ""}</form></div>`;
+  const fp = $("#fp"); if (fp) fp.onclick = async (e) => { e.preventDefault(); const em = $("#lf").elements.email.value.trim(); if (!em) return loginView("Type your email first, then tap Forgot password."); try { await S.be.resetEmail(em); loginView("If that email is on the team, a link to set a new password is on its way."); } catch (x) { loginView("Could not send the email right now. Try again in a minute."); } };
   $("#lf").addEventListener("submit", async (e) => {
     e.preventDefault(); const d = new FormData(e.target);
     try { S.me = await S.be.login(d.get("email"), d.get("password")); await boot(true); } catch (x) { loginView("Sign in failed. Check your email and password."); }
@@ -282,8 +283,14 @@ app.addEventListener("submit", async (e) => {
   } catch (x) { btn.disabled = false; alert(x.message || "Could not save."); }
 });
 
+function passwordView(err = "") {
+  app.innerHTML = `<div class="login"><h1>Clear Sites <span>CRM</span></h1><p class="mut">Choose your password (at least 10 characters).</p><form id="pf"><label>New password<input name="pw" type="password" autocomplete="new-password" minlength="10" required></label><button class="btn" type="submit">Save password</button>${err ? `<p class="err" role="alert">${esc(err)}</p>` : ""}</form></div>`;
+  $("#pf").addEventListener("submit", async (e) => { e.preventDefault(); try { await S.be.setPassword(new FormData(e.target).get("pw")); await boot(true); } catch (x) { passwordView(x.message); } });
+}
+
 async function boot(already) {
   if (!already) S.be = await getBackend();
+  if (S.be.needsPassword && S.be.needsPassword()) return passwordView();
   S.me = await S.be.session();
   if (!S.me) return loginView();
   if (S.me.role === "none") { app.innerHTML = `<div class="login"><h1>No access</h1><p class="mut">${esc(S.me.name)} is signed in but is not on the team list. Ask the owner to add you.</p><button class="btn" id="out2">Sign out</button></div>`; $("#out2").onclick = () => S.be.logout(); return; }

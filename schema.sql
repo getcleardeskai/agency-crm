@@ -109,3 +109,47 @@ alter table customers add column if not exists quoted_on date;
 alter table customers add column if not exists paid_on date;
 alter table customers add column if not exists source text;
 alter table customers add column if not exists lead_details text;
+
+-- ---------------- payments (Stripe -> n8n -> record_payment) ----------------
+create table if not exists payments (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  stripe_id text unique not null,
+  customer_id uuid references customers(id) on delete set null,
+  email text,
+  product text,
+  kind text check (kind in ('setup','monthly','other')),
+  amount_cents int,
+  paid_at timestamptz not null default now(),
+  seen boolean not null default false,
+  raw jsonb
+);
+alter table payments enable row level security;
+drop policy if exists payments_read on payments;
+drop policy if exists payments_edit on payments;
+drop policy if exists payments_delete on payments;
+create policy payments_read on payments for select using (is_team());
+create policy payments_edit on payments for update using (is_team()) with check (is_team());
+create policy payments_delete on payments for delete using (is_owner());
+
+-- Called only by n8n with the service key. Finds the customer by email (or creates one), marks Paid, adds the payment.
+create or replace function record_payment(p jsonb) returns uuid language plpgsql security definer set search_path = public as $$
+declare cid uuid; pid uuid; em text := lower(trim(coalesce(p->>'email','')));
+begin
+  if exists (select 1 from payments where stripe_id = p->>'stripe_id') then return null; end if;
+  select id into cid from customers where lower(email) = em and em <> '' order by created_at limit 1;
+  if cid is null then
+    insert into customers (business_name, contact_name, phone, email, stage, paid_on, source)
+    values (coalesce(nullif(p->>'business',''), nullif(p->>'name',''), nullif(em,''), 'Stripe customer'), p->>'name', p->>'phone', nullif(em,''), 'paid', current_date, 'stripe')
+    returning id into cid;
+  else
+    update customers set stage = case when stage in ('ready_to_quote','quoted','accepted') then 'paid' else stage end,
+      paid_on = current_date, updated_at = now() where id = cid;
+  end if;
+  insert into payments (stripe_id, customer_id, email, product, kind, amount_cents, raw)
+  values (p->>'stripe_id', cid, nullif(em,''), p->>'product', coalesce(p->>'kind','other'), nullif(p->>'amount_cents','')::int, p)
+  returning id into pid;
+  return pid;
+end $$;
+revoke all on function record_payment(jsonb) from public, anon, authenticated;
+grant execute on function record_payment(jsonb) to service_role;
